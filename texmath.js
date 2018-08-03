@@ -6,17 +6,31 @@
 
 function texmath(md, options) {
     let delimiters = options && options.delimiters || 'dollars';
+    let globalMacrosTex = options && options.globalMacros || [];
+    console.log('globalMacrosTex', globalMacrosTex);
+
+    let globalMacros = {};
+    globalMacrosTex.forEach(s => {
+        texmath.katex.renderToString(s, {throwOnError:true, displayMode:true, macros: globalMacros});
+    });
+
+    console.log('globalMacros', globalMacros);
+    texmath.globalMacros = globalMacros;
 
     if (delimiters in texmath.rules) {
         for (let rule of texmath.rules[delimiters].inline) {
             md.inline.ruler.before('escape', rule.name, texmath.inline(rule));  // ! important
-            md.renderer.rules[rule.name] = (tokens, idx) => rule.tmpl.replace(/\$1/,texmath.render(tokens[idx].content,false));
+            md.renderer.rules[rule.name] = (tokens, idx, options, env, renderer) => rule.tmpl.replace(/\$1/,texmath.render(tokens[idx].content,false, env));
         }
 
         for (let rule of texmath.rules[delimiters].block) {
             md.block.ruler.before('fence', rule.name, texmath.block(rule));
-            md.renderer.rules[rule.name] = (tokens, idx) => rule.tmpl.replace(/\$2/,tokens[idx].info)  // equation number .. ?
-                                                                     .replace(/\$1/,texmath.render(tokens[idx].content,true));
+
+            md.renderer.rules[rule.name] = (tokens, idx, options, env, renderer) => {
+                // console.log(tokens, idx, options, env, renderer);
+                return rule.tmpl.replace(/\$2/,tokens[idx].info)  // equation number .. ?
+                    .replace(/\$1/,texmath.render(tokens[idx].content,true, env));
+            }
         }
     }
 }
@@ -38,7 +52,7 @@ texmath.applyRule = function(rule, str, beg) {
 
 // texmath.inline = (rule) => dollar;  // just for testing ..
 
-texmath.inline = (rule) => 
+texmath.inline = (rule) =>
     function(state, silent) {
         let res = texmath.applyRule(rule, state.src, state.pos);
         if (res) {
@@ -52,7 +66,7 @@ texmath.inline = (rule) =>
         return !!res;
     }
 
-texmath.block = (rule) => 
+texmath.block = (rule) =>
     function(state, begLine, endLine, silent) {
         let res = texmath.applyRule(rule, state.src, state.bMarks[begLine] + state.tShift[begLine]);
         if (res) {
@@ -73,19 +87,28 @@ texmath.block = (rule) =>
         return !!res;
     }
 
-texmath.render = function(tex,isblock) {
+
+texmath.render = function(tex, isblock, env) {
     let res;
+    if (!env.texmathMacros) {
+        env.texmathMacros = Object.assign({}, texmath.globalMacros);
+    }
+    let n = Object.keys(env.texmathMacros).length;
     try {
-        res = texmath.katex.renderToString(tex,{throwOnError:false,displayMode:isblock}); //.replace(/([_*])/g, "\\$1"); // escaped underscore bug ...
+        res = texmath.katex.renderToString(tex,{throwOnError:true, displayMode:true, macros: env.texmathMacros}); //.replace(/([_*])/g, "\\$1"); // escaped underscore bug ...
     }
     catch(err) {
         res = tex+": "+err.message.replace("<","&lt;");
+    }
+    if (Object.keys(env.texmathMacros).length != n) {
+        console.log('macros', env.texmathMacros, n);
     }
     return res;
 }
 
 texmath.use = function(katex) {  // math renderer used ...
-    texmath.katex = katex;       // ... katex solely at current ...
+    texmath.katex = katex;
+    // ... katex solely at current ...
     return texmath;
 }
 
@@ -143,14 +166,14 @@ texmath.$_post = (str,end) => {
 
 texmath.rules = {
     brackets: {
-        inline: [ 
+        inline: [
             {   name: 'math_inline',
                 rex: /\\\((.+?)\\\)/gy,
                 tmpl: '<eq>$1</eq>',
                 tag: '\\('
             }
         ],
-        block: [ 
+        block: [
             {   name: 'math_block_eqno',
                 rex: /\\\[\s*?([\s\S]+?)\\\]\s*?\(([^)$\r\n]+?)\)/gmy,
                 tmpl: '<section class="eqno"><eqn>$1</eqn><span>($2)</span></section>',
@@ -164,14 +187,14 @@ texmath.rules = {
         ]
     },
     gitlab: {
-        inline: [ 
+        inline: [
             {   name: 'math_inline',
                 rex: /\$`(.+?)`\$/gy,
                 tmpl: '<eq>$1</eq>',
                 tag: '$`'
             }
         ],
-        block: [ 
+        block: [
             {   name: 'math_block_eqno',
                 rex: /`{3}math\s+?([^`]+?)\s+?`{3}\s*?\(([^)$\r\n]+?)\)/gmy,
                 tmpl: '<section class="eqno"><eqn>$1</eqn><span>($2)</span></section>',
@@ -206,8 +229,8 @@ texmath.rules = {
         ]
     },
     dollars: {
-        inline: [ 
-            {   name: 'math_inline', 
+        inline: [
+            {   name: 'math_inline',
                 rex: /\$(\S[^$\r\n]*?[^\s\\]{1}?)\$/gy,
                 tmpl: '<eq>$1</eq>',
                 tag: '$',
